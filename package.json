@@ -1,0 +1,13 @@
+{
+  "dependencies": {
+    "@agiledigital/pino-redact-pii": "^3.1.0",
+    "@dotenvx/dotenvx": "^1.51.0",
+    "@types/selenium-webdriver": "^4.35.3",
+    "chromedriver": "^142.0.0",
+    "openai": "^6.7.0",
+    "pii-paladin": "^2.0.2",
+    "redact-pii": "^3.4.0",
+    "selenium-webdriver": "^4.38.0",
+    "tesseract.js": "^6.0.1"
+  }
+}
