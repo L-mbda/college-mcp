@@ -1,9 +1,7 @@
 import { Builder, until, By } from "selenium-webdriver";
 import chrome from "selenium-webdriver/chrome";
 import { writeFileSync } from "fs";
-import { findText, identifyDecision } from "./tools";
-import { SyncRedactor } from "redact-pii";
-import { censorPII } from "pii-paladin";
+import { findNextAction, checkForDecision } from "./tools";
 
 async function getDecision(URL: string, email: string, password: string) {
   const options = new chrome.Options();
@@ -39,62 +37,112 @@ async function getDecision(URL: string, email: string, password: string) {
       return readyState === "complete";
     }, 60000);
     
-    const height = await driver.executeScript("return document.body.scrollHeight") as number;
-    await driver.manage().window().setRect({ width: 1920, height: height });
+    console.log("Logged in successfully");
     
-    const screenshot = await driver.takeScreenshot();
-    writeFileSync("dashboard.png", screenshot, "base64");
-    console.log("Dashboard screenshot saved");
+    // Loop: Take screenshot, send to LLM, click, repeat until decision found
+    let maxIterations = 10;
+    let iteration = 0;
+    let decisionFound = false;
+    let finalDecision = "NOT_FOUND";
     
-    // Use OCR to find the button text
-    const classifyButton = await findText();
-    const textToClick = classifyButton.clientResponse.content?.trim() || "";
-    console.log("Button text to click:", textToClick);
-    
-    // Find and click the button/link - use a more robust approach
-    // Try multiple strategies to find the element
-    let buttonToClick;
-    try {
-      // Strategy 1: Try exact text match with normalize-space
-      const normalizedText = textToClick.replace(/\s+/g, ' ').trim();
-      buttonToClick = await driver.findElement(
-        By.xpath(`//button[normalize-space(.)='${normalizedText}'] | //a[normalize-space(.)='${normalizedText}']`)
-      );
-    } catch (e) {
-      try {
-        // Strategy 2: Try partial text match
-        const searchText = textToClick.split(' ')[0]; // Use first word
-        buttonToClick = await driver.findElement(
-          By.xpath(`//button[contains(., '${searchText}')] | //a[contains(., '${searchText}')]`)
-        );
-      } catch (e2) {
-        // Strategy 3: Find by common class/id patterns for decision buttons
-        buttonToClick = await driver.findElement(
-          By.css('button[class*="view"], button[class*="update"], a[class*="view"], a[class*="update"], .view-button, .update-button')
-        );
+    while (!decisionFound && iteration < maxIterations) {
+      iteration++;
+      console.log(`\n=== Iteration ${iteration} ===`);
+      
+      // Get full page height and take screenshot
+      const height = await driver.executeScript("return document.body.scrollHeight") as number;
+      await driver.manage().window().setRect({ width: 1920, height: height });
+      
+      const screenshot = await driver.takeScreenshot();
+      const screenshotFilename = `screenshot_${iteration}.png`;
+      writeFileSync(screenshotFilename, screenshot, "base64");
+      console.log(`Screenshot saved: ${screenshotFilename}`);
+      
+      // First, ask LLM what to click next (prioritize navigation)
+      const nextAction = await findNextAction(screenshotFilename);
+      const textToClick = nextAction.clientResponse.content?.trim() || "";
+      
+      console.log(`LLM suggests clicking: "${textToClick}"`);
+      
+      // If there's a button to click, click it (don't check for decision yet)
+      if (textToClick !== "NONE" && textToClick !== "NOT_FOUND" && textToClick !== "") {
+        // Find and click the element
+        let buttonToClick;
+        try {
+          // Strategy 1: Try exact text match with normalize-space
+          const normalizedText = textToClick.replace(/\s+/g, ' ').trim();
+          buttonToClick = await driver.findElement(
+            By.xpath(`//button[normalize-space(.)='${normalizedText}'] | //a[normalize-space(.)='${normalizedText}']`)
+          );
+        } catch (e) {
+          try {
+            // Strategy 2: Try partial text match
+            const searchText = textToClick.split(' ')[0]; // Use first word
+            buttonToClick = await driver.findElement(
+              By.xpath(`//button[contains(., '${searchText}')] | //a[contains(., '${searchText}')]`)
+            );
+          } catch (e2) {
+            console.log(`Could not find element with text: ${textToClick}`);
+            // Check for decision before giving up
+            const decisionCheck = await checkForDecision(screenshotFilename);
+            const decision = decisionCheck.clientResponse.content?.trim().toLowerCase();
+            
+            if (decision && ['accepted', 'rejected', 'waitlisted', 'deferred'].includes(decision)) {
+              console.log(`Decision found: ${decision}`);
+              finalDecision = decision;
+              decisionFound = true;
+            } else {
+              finalDecision = "NOT_FOUND";
+            }
+            break;
+          }
+        }
+        
+        await buttonToClick.click();
+        console.log("Button clicked");
+        
+        // Wait for page to load after click
+        await driver.wait(async () => {
+          const readyState = await driver.executeScript("return document.readyState");
+          return readyState === "complete";
+        }, 60000);
+        
+        // Small delay to let any animations complete
+        await driver.sleep(1000);
+      } else {
+        // No more navigation buttons, check for decision
+        console.log("No navigation button found. Checking for decision...");
+        const decisionCheck = await checkForDecision(screenshotFilename);
+        const decision = decisionCheck.clientResponse.content?.trim().toLowerCase();
+        
+        if (decision && ['accepted', 'rejected', 'waitlisted', 'deferred'].includes(decision)) {
+          console.log(`Decision found: ${decision}`);
+          finalDecision = decision;
+          decisionFound = true;
+        } else {
+          console.log("No decision found on portal.");
+          finalDecision = "NOT_FOUND";
+          break;
+        }
       }
     }
     
-    await buttonToClick.click();
-    console.log("Button clicked");
+    if (iteration >= maxIterations) {
+      console.log("Max iterations reached without finding decision");
+    }
     
-    // Wait for the decision page to load
-    await driver.wait(async () => {
-      const readyState = await driver.executeScript("return document.readyState");
-      return readyState === "complete";
-    }, 60000);
+    return finalDecision;
     
-    // Get full page height and take screenshot
-    const decisionHeight = await driver.executeScript("return document.body.scrollHeight") as number;
-    await driver.manage().window().setRect({ width: 1920, height: decisionHeight });  
-    const decisionScreenshot = await driver.takeScreenshot();
-    writeFileSync("decision.png", decisionScreenshot, "base64");
-    console.log("Decision screenshot saved to decision.png");
-    const finalDecision = await identifyDecision();
-    return finalDecision.clientResponse.content;
   } finally {
     await driver.quit();
   }
 }
 
-await getDecision("https://ivyhub-simulators.andressevilla.com/uchicago/login.html", "e.r@e.com", "vcd@email.com");
+// Run the script
+const url = "https://ivyhub-simulators.andressevilla.com/uchicago/login.html";
+const email = "user@example.com";
+const password = "mypassword123";
+
+const result = await getDecision(url, email, password);
+console.log(`\n=== FINAL RESULT ===`);
+console.log(`Decision: ${result}`);
