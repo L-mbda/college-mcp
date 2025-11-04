@@ -25,7 +25,16 @@ export async function checkForDecision(imgPath: string) {
         console.warn('Could not write OCR text to disk:', err);
     }
     
-    const systemPrompt = 'You are a classifier to identify if the application decision is visible on this page. If you see "accepted", "rejected", "waitlisted", or "deferred", respond with ONLY that word (lowercase). If no decision is visible, respond with "NONE".';
+    const systemPrompt = `You are a classifier to identify if the ACTUAL admission decision is clearly visible on this page.
+
+Only return a decision if you see the ACTUAL decision statement (e.g., "Your application has been accepted", "We regret to inform you that you have been rejected", "You have been placed on the waitlist", "Your decision has been deferred").
+
+If you see:
+- Just status updates or notifications (e.g., "An update to your application was posted") → respond "NONE"
+- Just navigation hints (e.g., "View your decision") → respond "NONE"
+- The word "deferred", "accepted", "rejected", or "waitlisted" in the context of the ACTUAL decision → respond with that word (lowercase)
+
+Respond with ONLY: "accepted", "rejected", "waitlisted", "deferred", or "NONE".`;
 
     const response = await client.chat.completions.create({
         model: model as string,
@@ -61,7 +70,15 @@ export async function findNextAction(imgPath: string) {
         console.warn('Could not write OCR text to disk:', err);
     }
 
-    const systemPrompt = 'You are helping navigate a college application portal to find the admission decision. Look at the page text and identify the EXACT text of the button or link that should be clicked to view the decision (e.g., "View Update", "Review Decision", "Check Status", etc.). Respond with ONLY the exact button/link text. If no relevant button/link is found, respond with "NONE".';
+    const systemPrompt = `You are helping navigate a college application portal to find the admission decision. Your goal is to guide the user through the portal step by step.
+
+Look at the page text and identify the EXACT text of the next button or link to click. Follow this priority:
+1. First, look for buttons to OPEN or VIEW the application (e.g., "Open Application", "View Application", "[College Name]", application names, "2026 Early Decision")
+2. Then, look for buttons/links related to DECISIONS or UPDATES (e.g., "View Update", "Review Decision", "Check Status", "Decision Letter", "View Decision", "Status Update", "Application Decision")
+3. Look for expandable sections or tabs (e.g., "+", "Show Details", "Expand", "Decision", "Updates")
+4. If you see an "Application Checklist" or similar page with no decision-related buttons, respond with "NONE"
+
+Respond with ONLY the exact button/link text. If no relevant button/link is found or we're on a checklist page without decision info, respond with "NONE".`;
 
     const response = await client.chat.completions.create({
         model: model as string,

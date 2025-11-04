@@ -3,7 +3,7 @@ import chrome from "selenium-webdriver/chrome";
 import { writeFileSync } from "fs";
 import { findNextAction, checkForDecision } from "./tools";
 
-async function getDecision(URL: string, email: string, password: string) {
+export async function getDecision(URL: string, email: string, password: string) {
   const options = new chrome.Options();
   options.setChromeBinaryPath("/usr/bin/google-chrome");
   options.addArguments("--headless=new");
@@ -137,12 +137,3 @@ async function getDecision(URL: string, email: string, password: string) {
     await driver.quit();
   }
 }
-
-// Run the script
-const url = "https://ivyhub-simulators.andressevilla.com/uchicago/login.html";
-const email = "user@example.com";
-const password = "mypassword123";
-
-const result = await getDecision(url, email, password);
-console.log(`\n=== FINAL RESULT ===`);
-console.log(`Decision: ${result}`);
